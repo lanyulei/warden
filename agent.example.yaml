@@ -1,0 +1,40 @@
+basic:
+  plugin_dir: "./plugins"
+  max_memory_mb: 32
+  max_cpu_percent: 3
+  max_file_handles: 32
+
+grpc:
+  masters:
+    - "127.0.0.1:50051"
+  connect_timeout_secs: 5
+  max_receive_message_mb: 16
+  max_send_message_mb: 16
+  keepalive:
+    time_secs: 30
+    timeout_secs: 5
+    permit_without_calls: true
+  reconnect:
+    max_attempts: 5
+    initial_backoff_secs: 1
+    max_backoff_secs: 20
+    backoff_multiplier: 2.0
+
+tls:
+  enable: false
+  ca_file: ""
+  cert_file: ""
+  key_file: ""
+  server_name_override: ""
+
+telemetry:
+  log_level: "info"
+  log_format: "json"
+  log_output: "stdout"
+  log_file: "./log/agent.log"
+  log_rotation:
+    max_size_mb: 100
+    max_files: 7
+    compress: true
+  metrics_port: 9090
+  metrics_path: "/metrics"

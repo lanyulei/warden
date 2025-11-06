@@ -1,0 +1,25 @@
+syntax = "proto3";
+package agent;
+
+message Heartbeat {
+  string id = 1;
+  int64 ts = 2;
+  repeated string capabilities = 3;
+}
+
+message ControlCmd {
+  string id = 1;
+  string cmd = 2;
+  bytes payload = 3;
+}
+
+message CollectData {
+  string id = 1;
+  bytes payload = 2;
+  int64 ts = 3;
+}
+
+service Agent {
+  // BiDi stream: client sends HEARTBEAT / COLLECT data; server sends CONTROL commands
+  rpc Stream(stream ControlCmd) returns (stream CollectData);
+}
