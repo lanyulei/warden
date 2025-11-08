@@ -22,11 +22,6 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<AppConfig> {
     let path_ref: &Path = env_path.as_deref().unwrap_or_else(|| path.as_ref());
     if path_ref.exists() {
         builder = builder.add_source(File::from(path_ref));
-    } else {
-        println!(
-            "配置文件 {} 不存在，使用默认配置",
-            path_ref.display()
-        );
     }
 
     // 环境变量覆盖
