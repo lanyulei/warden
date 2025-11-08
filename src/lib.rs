@@ -8,6 +8,7 @@ mod executor;
 mod storage;
 mod cli;
 mod telemetry;
+mod collector;
 
 use clap::Parser;
 use anyhow::Result;

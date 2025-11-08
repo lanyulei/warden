@@ -1,3 +1,5 @@
+//! Logging module with async file rotation and multi-output support.
+
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
@@ -15,16 +17,16 @@ use tracing_subscriber::{
     reload,
     util::SubscriberInitExt,
     Registry,
-    Layer, // 引入 Layer trait 以支持 .boxed()
+    Layer, // For .boxed()
 };
 use once_cell::sync::OnceCell;
 
-use crate::config::schema::TelemetryConfig; // 使用 TelemetryConfig 而不是不存在的 LoggingConfig
+use crate::config::schema::TelemetryConfig;
 
-/// 全局初始化版本：保存句柄，确保后台线程存活
+/// Global logger handle for background thread management
 static LOGGER_HANDLE: OnceCell<LoggerHandle> = OnceCell::new();
 
-// 公共的 fmt::layer 基础构建宏（不包含格式与 writer），用于减少 JSON / plain 分支重复。
+// Macro for base fmt::layer construction (no format/writer)
 macro_rules! base_fmt_layer {
     () => {
         fmt::layer()
@@ -39,21 +41,21 @@ macro_rules! base_fmt_layer {
     };
 }
 
-/// 异步写入命令
+/// Async file write commands
 enum Cmd {
     Write(Vec<u8>),
     Flush,
     Shutdown,
 }
 
-/// 后台文件写入器（带大小轮转与保留）
+/// Rotating file writer with size-based rotation and retention
 struct RotatingFileWorker {
     base_path: PathBuf,
     file: Option<File>,
     current_size: u64,
     max_size: u64,
-    keep: usize, // 保留的历史文件数量（不含当前 active 文件）
-    compress: bool, // 是否对轮转后的旧文件进行压缩（gzip）
+    keep: usize,    // Number of rotated files to keep
+    compress: bool, // Compress rotated files (gzip)
 }
 
 impl RotatingFileWorker {
@@ -80,7 +82,6 @@ impl RotatingFileWorker {
             .append(true)
             .write(true)
             .open(&self.base_path)?;
-        // 打开时同步文件大小（可能已有历史内容）
         let size = f.metadata().map(|m| m.len()).unwrap_or(0);
         self.file = Some(f);
         self.current_size = size;
@@ -88,41 +89,33 @@ impl RotatingFileWorker {
     }
 
     fn rotate(&mut self) -> io::Result<()> {
-        // 关闭当前文件
         self.file.take();
-        // 依次上移 .keep -> .keep+1，...，.1 -> .2
         if self.keep > 0 {
             for i in (1..=self.keep).rev() {
                 let src = self.suffixed(i);
                 let dst = self.suffixed(i + 1);
                 if src.exists() {
-                    // 超过保留则先删除最高位，避免 rename 冲突
                     if i == self.keep && dst.exists() {
                         let _ = fs::remove_file(&dst);
                     }
                     let _ = fs::rename(&src, &dst);
                 }
             }
-            // base -> .1
             if self.base_path.exists() {
                 let dst = self.suffixed(1);
-                // 若 .1 存在，先删
                 if dst.exists() {
                     let _ = fs::remove_file(&dst);
                 }
                 let _ = fs::rename(&self.base_path, &dst);
-                // 根据配置压缩刚轮转出的文件（.1）
                 if self.compress {
                     let _ = Self::compress_file(&dst);
                 }
             }
         } else {
-            // keep == 0：直接丢弃历史，生成新文件
             if self.base_path.exists() {
                 let _ = fs::remove_file(&self.base_path);
             }
         }
-        // 重新打开一个空文件
         self.open_new_file()
     }
 
@@ -156,20 +149,18 @@ impl RotatingFileWorker {
         Ok(())
     }
 
-    /// 简单 gzip 压缩（如果 flate2 不可用，可后续增强）。当前实现占位：直接返回 Ok(())。
+    /// Placeholder for gzip compression (can be enhanced with flate2)
     #[allow(unused)]
-    fn compress_file(path: &Path) -> io::Result<()> {
-        // 预留：为了不引入额外依赖，当前不做真实压缩，可后续添加 flate2、gzip 支持。
-        // 真实实现时可将原文件读取并写入 path.gz，然后删除原文件。
+    fn compress_file(_path: &Path) -> io::Result<()> {
         Ok(())
     }
 }
 
-/// MultiWriter：统一 stdout / file / both 输出，避免多层类型不一致导致的编译复杂度
+/// MultiWriter: unified stdout/file/both output
 #[derive(Clone)]
 struct MultiWriter {
     to_stdout: bool,
-    file_tx: Option<mpsc::Sender<Cmd>>, // 若需要文件输出则存在
+    file_tx: Option<mpsc::Sender<Cmd>>,
 }
 
 struct MultiWriterHandle {
@@ -180,7 +171,6 @@ struct MultiWriterHandle {
 impl Write for MultiWriterHandle {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.to_stdout {
-            // 尽量使用标准输出写入；忽略错误避免影响主流程
             let _ = std::io::stdout().write_all(buf);
         }
         if let Some(tx) = &self.file_tx {
@@ -209,7 +199,7 @@ impl<'a> fmt::MakeWriter<'a> for MultiWriter {
     }
 }
 
-/// 全局日志句柄：支持动态调整级别与优雅关闭
+/// Logger handle for graceful shutdown and dynamic level
 pub struct LoggerHandle {
     _bg: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     tx: mpsc::Sender<Cmd>,
@@ -226,7 +216,7 @@ impl Drop for LoggerHandle {
     }
 }
 
-/// 校验 TelemetryConfig 中与日志相关的字段
+/// Validate TelemetryConfig logging fields
 fn validate_config(cfg: &TelemetryConfig) -> Result<()> {
     match cfg.log_level.to_ascii_lowercase().as_str() {
         "error" | "warn" | "info" | "debug" | "trace" => {}
@@ -252,18 +242,16 @@ fn validate_config(cfg: &TelemetryConfig) -> Result<()> {
     Ok(())
 }
 
-/// 初始化全局日志（在 `main` 最早调用）
-/// - JSON/Plain 格式二选一；
-/// - 输出支持 stdout/file/both；
-/// - 文件输出为异步写入 + 大小轮转；
-/// - 自动携带模块、文件、行号与当前 span。
+/// Initialize global logger (call early in main)
+/// - Supports JSON/plain format
+/// - Output: stdout/file/both
+/// - Async file write with rotation
 pub fn init_logging(cfg: &TelemetryConfig) -> Result<LoggerHandle> {
     validate_config(cfg)?;
     let default_level = cfg.log_level.to_ascii_lowercase();
     let filter = EnvFilter::try_new(default_level.clone()).unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter_layer, _filter_handle) = reload::Layer::new(filter);
 
-    // 文件轮转线程（仅当需要文件输出）
     let keep = if cfg.log_rotation.max_files > 0 { (cfg.log_rotation.max_files - 1) as usize } else { 0 };
     let max_size_bytes = (cfg.log_rotation.max_size_mb as u64) * 1024 * 1024;
     let (file_tx, bg_handle_opt) = if cfg.log_output == "file" || cfg.log_output == "both" {
@@ -297,9 +285,11 @@ pub fn init_logging(cfg: &TelemetryConfig) -> Result<LoggerHandle> {
         (Some(tx), Some(bg))
     } else { (None, None) };
 
-    let multi_writer = MultiWriter { to_stdout: cfg.log_output == "stdout" || cfg.log_output == "both", file_tx: file_tx.clone() };
+    let multi_writer = MultiWriter {
+        to_stdout: cfg.log_output == "stdout" || cfg.log_output == "both",
+        file_tx: file_tx.clone(),
+    };
 
-    // 使用统一构建，保持原有行为不变，仅去重
     let fmt_layer = if cfg.log_format == "json" {
         base_fmt_layer!()
             .json()
@@ -329,7 +319,7 @@ pub fn init_logging(cfg: &TelemetryConfig) -> Result<LoggerHandle> {
     Ok(LoggerHandle { _bg: bg, tx })
 }
 
-/// 初始化全局日志并保存句柄，多次调用将返回错误
+/// Initialize global logger and save handle (error if already set)
 pub fn init_global_logging(cfg: &TelemetryConfig) -> Result<&'static LoggerHandle> {
     let handle = init_logging(cfg)?;
     LOGGER_HANDLE
