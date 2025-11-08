@@ -1,3 +1,6 @@
-fn main() {
-    println!("Hello, world!");
+use warden::run;
+use anyhow::Result;
+
+fn main() -> Result<()> {
+    run()
 }

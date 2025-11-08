@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub basic: BasicConfig,
     pub grpc: GrpcConfig,
@@ -19,10 +20,10 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasicConfig {
     pub plugin_dir: String, // 插件目录
-
+    pub sqlite_path: String, // SQLite数据库文件路径
     pub max_memory_mb: u32, // 最大内存，单位 mb
     pub max_cpu_percent: u32, // 最大CPU使用百分比
     pub max_file_handles: u32, // 最大文件句柄数
@@ -32,6 +33,7 @@ impl Default for BasicConfig {
     fn default() -> Self {
         Self {
             plugin_dir: "./plugins".to_string(),
+            sqlite_path: "./data/db.sqlite".to_string(),
             max_memory_mb: 32,
             max_cpu_percent: 3,
             max_file_handles: 32,
@@ -39,7 +41,7 @@ impl Default for BasicConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcConfig {
     pub masters: Vec<String>, // master地址列表
     pub connect_timeout_secs: u64, // 连接超时时间，单位 秒
@@ -62,7 +64,7 @@ impl Default for GrpcConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeepaliveConfig {
     pub time_secs: u64,  // 发送keepalive的时间间隔，单位 秒
     pub timeout_secs: u64, // 等待keepalive响应的时间，单位 秒
@@ -79,7 +81,7 @@ impl Default for KeepaliveConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconnectConfig {
     pub max_attempts: u32, // 最大重试次数
     pub initial_backoff_secs: u64, // 初始重试间隔，单位 秒
@@ -98,7 +100,7 @@ impl Default for ReconnectConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
     pub enable: bool,  // 是否启用tls
     pub ca_file: String, // CA证书文件路径
@@ -119,16 +121,16 @@ impl Default for TlsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryConfig {
-    log_level: String, // 日志级别
-    log_format: String, // 日志格式 (如 json, plain)
-    log_output: String, // 日志输出位置，如 stdout, file
-    log_file: String, // 日志文件路径，当 log_output 为 file 时生效
-    log_rotation: LogRotationConfig, // 日志轮转配置
+    pub log_level: String, // 日志级别
+    pub log_format: String, // 日志格式 (如 json, plain)
+    pub log_output: String, // 日志输出位置，如 stdout, file
+    pub log_file: String, // 日志文件路径，当 log_output 为 file 时生效
+    pub log_rotation: LogRotationConfig, // 日志轮转配置
 
-    metrics_port: u16, // 指标端口
-    metrics_path: String, // 指标路径
+    pub metrics_port: u16, // 指标端口
+    pub metrics_path: String, // 指标路径
 }
 
 impl Default for TelemetryConfig {
@@ -145,11 +147,11 @@ impl Default for TelemetryConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogRotationConfig {
-    max_size_mb: u32, // 最大日志文件大小，单位 mb
-    max_files: u32, // 最大日志文件数量
-    compress: bool, // 是否压缩旧日志文件
+    pub max_size_mb: u32, // 最大日志文件大小，单位 mb
+    pub max_files: u32, // 最大日志文件数量
+    pub compress: bool, // 是否压缩旧日志文件
 }
 
 impl Default for LogRotationConfig {
@@ -159,5 +161,32 @@ impl Default for LogRotationConfig {
             max_files: 7,
             compress: true,
         }
+    }
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        if self.grpc.masters.len() == 0 {
+            return Err(anyhow!("masters is empty"));
+        }
+        if self.basic.sqlite_path.is_empty() {
+            return Err(anyhow!("sqlite_path is empty"));
+        }
+        match self.telemetry.log_level.to_ascii_lowercase().as_str() {
+            "error" | "warn" | "info" | "debug" | "trace" => {}
+            other => return Err(anyhow!("invalid log_level: {}", other)),
+        }
+        match self.telemetry.log_format.to_ascii_lowercase().as_str() {
+            "json" | "plain" => {}
+            other => return Err(anyhow!("invalid log_format: {}", other)),
+        }
+        match self.telemetry.log_output.to_ascii_lowercase().as_str() {
+            "stdout" | "file" | "both" => {}
+            other => return Err(anyhow!("invalid log_output: {}", other)),
+        }
+        if (self.telemetry.log_output == "file" || self.telemetry.log_output == "both") && self.telemetry.log_file.trim().is_empty() {
+            return Err(anyhow!("log_file required when output=file/both"));
+        }
+        Ok(())
     }
 }
