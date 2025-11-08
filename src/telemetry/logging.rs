@@ -4,22 +4,22 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use once_cell::sync::OnceCell;
 use tracing_subscriber::{
+    Layer, // For .boxed()
+    Registry,
     filter::EnvFilter,
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     reload,
     util::SubscriberInitExt,
-    Registry,
-    Layer, // For .boxed()
 };
-use once_cell::sync::OnceCell;
 
 use crate::config::schema::TelemetryConfig;
 
@@ -59,7 +59,12 @@ struct RotatingFileWorker {
 }
 
 impl RotatingFileWorker {
-    fn new<P: AsRef<Path>>(base: P, max_size: u64, keep: usize, compress: bool) -> io::Result<Self> {
+    fn new<P: AsRef<Path>>(
+        base: P,
+        max_size: u64,
+        keep: usize,
+        compress: bool,
+    ) -> io::Result<Self> {
         let base_path = base.as_ref().to_path_buf();
         if let Some(dir) = base_path.parent() {
             fs::create_dir_all(dir)?;
@@ -249,41 +254,54 @@ fn validate_config(cfg: &TelemetryConfig) -> Result<()> {
 pub fn init_logging(cfg: &TelemetryConfig) -> Result<LoggerHandle> {
     validate_config(cfg)?;
     let default_level = cfg.log_level.to_ascii_lowercase();
-    let filter = EnvFilter::try_new(default_level.clone()).unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter =
+        EnvFilter::try_new(default_level.clone()).unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter_layer, _filter_handle) = reload::Layer::new(filter);
 
-    let keep = if cfg.log_rotation.max_files > 0 { (cfg.log_rotation.max_files - 1) as usize } else { 0 };
+    let keep = if cfg.log_rotation.max_files > 0 {
+        (cfg.log_rotation.max_files - 1) as usize
+    } else {
+        0
+    };
     let max_size_bytes = (cfg.log_rotation.max_size_mb as u64) * 1024 * 1024;
     let (file_tx, bg_handle_opt) = if cfg.log_output == "file" || cfg.log_output == "both" {
         let (tx, rx) = mpsc::channel::<Cmd>();
         let base = PathBuf::from(cfg.log_file.clone());
         let compress = cfg.log_rotation.compress;
-        let bg = thread::Builder::new().name("log-rotate-writer".into()).spawn(move || {
-            let mut worker = match RotatingFileWorker::new(&base, max_size_bytes, keep, compress) {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("[logging] failed to init file writer: {e}");
-                    return;
-                }
-            };
-            while let Ok(cmd) = rx.recv() {
-                match cmd {
-                    Cmd::Write(buf) => {
-                        if let Err(e) = worker.write(&buf) {
-                            eprintln!("[logging] write error: {e}");
-                            thread::sleep(Duration::from_millis(5));
+        let bg = thread::Builder::new()
+            .name("log-rotate-writer".into())
+            .spawn(move || {
+                let mut worker =
+                    match RotatingFileWorker::new(&base, max_size_bytes, keep, compress) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("[logging] failed to init file writer: {e}");
+                            return;
+                        }
+                    };
+                while let Ok(cmd) = rx.recv() {
+                    match cmd {
+                        Cmd::Write(buf) => {
+                            if let Err(e) = worker.write(&buf) {
+                                eprintln!("[logging] write error: {e}");
+                                thread::sleep(Duration::from_millis(5));
+                            }
+                        }
+                        Cmd::Flush => {
+                            let _ = worker.flush();
+                        }
+                        Cmd::Shutdown => {
+                            let _ = worker.flush();
+                            break;
                         }
                     }
-                    Cmd::Flush => { let _ = worker.flush(); }
-                    Cmd::Shutdown => {
-                        let _ = worker.flush();
-                        break;
-                    }
                 }
-            }
-        }).expect("spawn log writer thread");
+            })
+            .expect("spawn log writer thread");
         (Some(tx), Some(bg))
-    } else { (None, None) };
+    } else {
+        (None, None)
+    };
 
     let multi_writer = MultiWriter {
         to_stdout: cfg.log_output == "stdout" || cfg.log_output == "both",

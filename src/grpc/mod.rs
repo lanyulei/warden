@@ -1,2 +1,2 @@
-mod reconnect;
 mod auth;
+mod reconnect;

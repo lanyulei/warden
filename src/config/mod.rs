@@ -1,10 +1,10 @@
 mod loader;
 pub mod schema;
 
-use once_cell::sync::OnceCell;
-use std::sync::Arc;
-use std::path::Path;
 use anyhow::Result;
+use once_cell::sync::OnceCell;
+use std::path::Path;
+use std::sync::Arc;
 
 static GLOBAL_CONFIG: OnceCell<Arc<schema::Config>> = OnceCell::new();
 

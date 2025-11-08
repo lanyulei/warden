@@ -15,7 +15,9 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<AppConfig> {
     builder = builder.add_source(File::from_str(&default_str, config::FileFormat::Json));
 
     // 优先使用环境变量指定的配置文件
-    let mut env_path = std::env::var("WARDEN_CONFIG_PATH").ok().map(std::path::PathBuf::from);
+    let mut env_path = std::env::var("WARDEN_CONFIG_PATH")
+        .ok()
+        .map(std::path::PathBuf::from);
     if let Some(ref p) = env_path {
         if !p.exists() {
             env_path = None; // 不存在则忽略
@@ -29,7 +31,9 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<AppConfig> {
     // 环境变量覆盖配置项
     builder = builder.add_source(Environment::with_prefix("WARDEN").separator("_"));
     let raw_cfg = builder.build().context("Failed to build config")?;
-    let cfg: AppConfig = raw_cfg.try_deserialize().context("Failed to deserialize config")?;
+    let cfg: AppConfig = raw_cfg
+        .try_deserialize()
+        .context("Failed to deserialize config")?;
     cfg.validate().context("Config validation failed")?;
     Ok(cfg)
 }

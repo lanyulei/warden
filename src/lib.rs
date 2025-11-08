@@ -1,18 +1,18 @@
 mod agent;
+mod cli;
+mod collector;
 mod config;
 mod error;
-mod utils;
-mod plugin;
-mod grpc;
 mod executor;
+mod grpc;
+mod plugin;
 mod storage;
-mod cli;
 mod telemetry;
-mod collector;
+mod utils;
 
-use clap::Parser;
-use anyhow::Result;
 use crate::telemetry::logging::init_logging;
+use anyhow::Result;
+use clap::Parser;
 
 pub fn run() -> Result<()> {
     let cli = cli::Cli::parse();

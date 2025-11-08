@@ -1,3 +1,3 @@
+pub mod logging;
 mod metrics;
 mod tracing;
-pub mod logging;
