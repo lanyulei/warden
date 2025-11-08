@@ -21,6 +21,9 @@ use once_cell::sync::OnceCell;
 
 use crate::config::schema::TelemetryConfig; // 使用 TelemetryConfig 而不是不存在的 LoggingConfig
 
+/// 全局初始化版本：保存句柄，确保后台线程存活
+static LOGGER_HANDLE: OnceCell<LoggerHandle> = OnceCell::new();
+
 // 公共的 fmt::layer 基础构建宏（不包含格式与 writer），用于减少 JSON / plain 分支重复。
 macro_rules! base_fmt_layer {
     () => {
@@ -210,26 +213,7 @@ impl<'a> fmt::MakeWriter<'a> for MultiWriter {
 pub struct LoggerHandle {
     _bg: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     tx: mpsc::Sender<Cmd>,
-    // filter_handle: reload::Handle<EnvFilter, Registry>,
 }
-
-// impl LoggerHandle {
-//     /// 动态调整日志级别（不重建管线）
-//     pub fn set_level(&self, level: &str) -> Result<()> {
-//         let level = level.to_ascii_lowercase();
-//         let spec = match level.as_str() {
-//             "error" => "error",
-//             "warn" => "warn",
-//             "info" => "info",
-//             "debug" => "debug",
-//             "trace" => "trace",
-//             other => other,
-//         };
-//         let new_filter = EnvFilter::try_new(spec)?;
-//         self.filter_handle.reload(new_filter)?;
-//         Ok(())
-//     }
-// }
 
 impl Drop for LoggerHandle {
     fn drop(&mut self) {
@@ -344,9 +328,6 @@ pub fn init_logging(cfg: &TelemetryConfig) -> Result<LoggerHandle> {
     });
     Ok(LoggerHandle { _bg: bg, tx })
 }
-
-/// 全局初始化版本：保存句柄，确保后台线程存活
-static LOGGER_HANDLE: OnceCell<LoggerHandle> = OnceCell::new();
 
 /// 初始化全局日志并保存句柄，多次调用将返回错误
 pub fn init_global_logging(cfg: &TelemetryConfig) -> Result<&'static LoggerHandle> {
